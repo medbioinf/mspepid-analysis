@@ -1,7 +1,8 @@
 # some functions for the parsing of percolator files
-import pandas as pd
-
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+
+import pandas as pd
 
 def concatenate_on_bad_line(line, nr_headers):
     # Create new list with first nr_headers elements and concatenated rest
@@ -14,26 +15,26 @@ def concatenate_on_bad_line(line, nr_headers):
     return new_line
 
 
-def parse_percolator_tsv(filename: str, columns: list = None) -> pd.DataFrame:
+def parse_percolator_tsv(filename: str) -> pd.DataFrame:
     """
     Reads in the given percolator TSV file as a DataFrame (can be pin or pout, index is not set)
     """
+
     with open(filename, "r") as infile:
-        first_line = infile.readline()
-        splitline = first_line.strip().split("\t")
-        headers = splitline
-        nr_headers = len(headers)
+        headers = infile.readline().strip().split("\t")
+    nr_headers = len(headers)
 
-        df_perc = pd.read_csv(
-            filename,
-            sep="\t",
-            header=None,
-            names=headers,
-            engine="python",
-            on_bad_lines=partial(concatenate_on_bad_line, nr_headers=nr_headers),
-        )
+    df_perc = pd.read_csv(
+        filename,
+        sep="\t",
+        header=None,
+        names=headers,
+        dtype=str,
+        engine="python",
+        on_bad_lines=partial(concatenate_on_bad_line, nr_headers=nr_headers),
+    )
 
-        df_perc.drop(df_perc.index[:1], inplace=True)
+    df_perc.drop(df_perc.index[:1], inplace=True)
     
     return df_perc
 
@@ -64,11 +65,11 @@ def parse_percolator_tsv_old(filename: str) -> pd.DataFrame:
     return df_perc
 
 
-def parse_percolator_pin(filename: str, columns: list = None) -> pd.DataFrame:
+def parse_percolator_pin(filename: str) -> pd.DataFrame:
     """
     Reads in the given percolator pin file as a DataFrame
     """
-    df_perc = parse_percolator_tsv(filename, columns)
+    df_perc = parse_percolator_tsv(filename)
 
     # rename the columns (tools write them differently / upper- and lowercase)
     df_perc.rename(columns={df_perc.columns[0]: "SpecId"}, inplace=True)
@@ -76,8 +77,8 @@ def parse_percolator_pin(filename: str, columns: list = None) -> pd.DataFrame:
     df_perc.rename(columns={df_perc.columns[2]: "ScanNr"}, inplace=True)
     # set correct index and data types
     df_perc.set_index("SpecId", inplace=True, drop=False)
-    df_perc["Label"] = pd.to_numeric(df_perc["Label"])
-    df_perc["ScanNr"] = pd.to_numeric(df_perc["ScanNr"])
+    df_perc["Label"] = pd.to_numeric(df_perc["Label"], downcast="integer", errors="coerce")
+    df_perc["ScanNr"] = pd.to_numeric(df_perc["ScanNr"], downcast="integer", errors="coerce")
 
     return df_perc
 
@@ -91,9 +92,9 @@ def parse_percolator_pout(filename: str) -> pd.DataFrame:
     # set correct index and data types
     df_perc.rename(columns={df_perc.columns[0]: "PSMId"}, inplace=True)
     df_perc.set_index("PSMId", inplace=True, drop=False)
-    df_perc["score"] = pd.to_numeric(df_perc["score"])
-    df_perc["q-value"] = pd.to_numeric(df_perc["q-value"])
-    df_perc["posterior_error_prob"] = pd.to_numeric(df_perc["posterior_error_prob"])
+    df_perc["score"] = pd.to_numeric(df_perc["score"], errors="coerce", downcast="float")
+    df_perc["q-value"] = pd.to_numeric(df_perc["q-value"], errors="coerce", downcast="float")
+    df_perc["posterior_error_prob"] = pd.to_numeric(df_perc["posterior_error_prob"], errors="coerce", downcast="float")
 
     return df_perc
 
@@ -102,25 +103,26 @@ def read_enriched_pout_with_pin_data(pout_file: str, pin_file: str) -> pd.DataFr
     """
     Reads in a Percolator pout file and enriches it with the data from the corresponding pin file
     """
-    pin_df = parse_percolator_pin(pin_file, columns=["SpecId", "Label", "ScanNr"])
+    pin_df = parse_percolator_pin(pin_file)
     pout_df = parse_percolator_pout(pout_file)
 
-    return pout_df.merge(
-        pin_df,
+    merged = pout_df.join(
+        pin_df[["ScanNr"]],  # keep only what’s needed from pin
         how="left",
-        left_index=True,
-        right_index=True,
-        suffixes=("", "_pin"),
-    )[
-        [
-            "ScanNr",
-            "score",
-            "q-value",
-            "posterior_error_prob",
-            "peptide",
-            "proteinIds",
-        ]
+        rsuffix="_pin",
+        sort=False
+    )
+    
+    final_cols = [
+        "ScanNr",
+        "score",
+        "q-value",
+        "posterior_error_prob",
+        "peptide",
+        "proteinIds",
     ]
+
+    return merged[final_cols]
 
 
 def read_and_filter_pout_file(
