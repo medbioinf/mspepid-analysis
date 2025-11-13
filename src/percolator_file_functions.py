@@ -1,68 +1,56 @@
 # some functions for the parsing of percolator files
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 
+import csv
+from pathlib import Path
 import pandas as pd
 
-def concatenate_on_bad_line(line, nr_headers):
-    # Create new list with first nr_headers elements and concatenated rest
-    new_line = line[:nr_headers-1]
-
-    # Concatenate all elements after nr_headers into a single string
-    if len(line) > nr_headers-1:
-        concatenated = "\t".join(line[nr_headers-1:])
-        new_line.append(concatenated)
-    return new_line
-
-
-def parse_percolator_tsv(filename: str) -> pd.DataFrame:
+def parse_percolator_tsv(filename: str):
     """
-    Reads in the given percolator TSV file as a DataFrame (can be pin or pout, index is not set)
+    Fast parser for Percolator TSV files where rows may have more columns than headers.
+
+    Parameters
+    ----------
+    filename : str
+        Path to the percolator file.
+
+    Returns 
+    ------
+    pandas.DataFrame
+        DataFrame with the parsed rows. The last column contains tab separated protein accessions.
     """
+    fpath = Path(filename)
+    if not fpath.exists():
+        raise FileNotFoundError(f"{filename} not found.")
 
-    with open(filename, "r") as infile:
-        headers = infile.readline().strip().split("\t")
-    nr_headers = len(headers)
+    with open(fpath, "r", newline="") as fh:
+        header_line = fh.readline().rstrip("\r\n")
+        headers = header_line.split("\t")
+        nr_headers = len(headers)
+        last_idx = nr_headers - 1
 
-    df_perc = pd.read_csv(
-        filename,
-        sep="\t",
-        header=None,
-        names=headers,
-        dtype=str,
-        engine="python",
-        on_bad_lines=partial(concatenate_on_bad_line, nr_headers=nr_headers),
-    )
+        reader = csv.reader(fh, delimiter="\t", quotechar='"')
 
-    df_perc.drop(df_perc.index[:1], inplace=True)
-    
-    return df_perc
+        container = {h: [] for h in headers}
 
-
-def parse_percolator_tsv_old(filename: str) -> pd.DataFrame:
-    """
-    Reads in the given percolator TSV file as a DataFrame (can be pin or pout, index is not set accordingly)
-    """
-    line_count = 0
-    headers = []
-    nr_headers = 0
-    lines_list = list()
-    with open(filename) as fp:
-        for line in fp:
-            if line_count == 0:
-                # parse the headers first
-                splitline = str(line).strip().split("\t")
-                headers = splitline
-                nr_headers = len(headers)
-                line_count += 1
+        for row in reader:
+            if len(row) <= nr_headers:
+                # pad if shorter
+                if len(row) < nr_headers:
+                    row = row + [""] * (nr_headers - len(row))
+                # trailing proteins field -> list (empty string -> empty list)
+                proteins_list = [row[last_idx]] if row[last_idx] != "" else []
             else:
-                splitline = str(line).strip().split("\t", maxsplit=nr_headers - 1)
-                splitline[nr_headers - 1] = splitline[nr_headers - 1].lstrip('"').rstrip('"').split("\t")
-                lines_list.append(splitline)
+                # more fields than headers -> subsume trailing fields into proteins list
+                proteins_list = row[last_idx:]
 
-    df_perc = pd.DataFrame(data=lines_list, columns=headers)
+            for i in range(last_idx):
+                container[headers[i]].append(row[i])
+                
+            container[headers[last_idx]].append("\t".join(proteins_list))
 
-    return df_perc
+        # create the dataframe
+        df = pd.DataFrame.from_dict(container)
+        return df
 
 
 def parse_percolator_pin(filename: str) -> pd.DataFrame:
