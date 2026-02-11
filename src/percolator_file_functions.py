@@ -4,6 +4,11 @@ import csv
 from pathlib import Path
 import pandas as pd
 
+# oktoberfest creates huge fields... increase a bit from the default 0x20000 (128k)
+# csv.field_size_limit(0xa0000)
+csv.field_size_limit(10**9)
+
+
 def parse_percolator_tsv(filename: str):
     """
     Fast parser for Percolator TSV files where rows may have more columns than headers.

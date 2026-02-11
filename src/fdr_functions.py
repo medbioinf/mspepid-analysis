@@ -13,7 +13,7 @@ def calculate_fdr(pin_df: pd.DataFrame, fdr_by: str, lowerscorebetter: bool = Fa
     nr_decoys = pin_df["is_decoy"].cumsum()
 
     # Calculate FDR
-    fdr = nr_decoys / nr_targets
+    fdr = (nr_decoys + 1) / nr_targets
 
     # q-value
     pin_df['q-value'] = fdr[::-1].cummin()[::-1]
