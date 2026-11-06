@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 
 def calculate_fdr(pin_df: pd.DataFrame, fdr_by: str, lowerscorebetter: bool = False) -> pd.DataFrame:
@@ -25,7 +27,8 @@ def calculate_fdp(pin_df: pd.DataFrame, fdp_by: str, entr_fold: int, lowerscoreb
     Calculate FDP (using entrapment after https://doi.org/10.1101/2024.06.01.596967 )
     """
     pin_df["proteinIds"] = pin_df["proteinIds"].apply(
-        lambda ids: ids.split("\t") if isinstance(ids, str) else ids
+        # proteins may be tab-separated (Percolator, MS2Rescore) or joined by ", " or ";" in one field (Oktoberfest)
+        lambda ids: [protein.strip() for protein in re.split(r"[\t;,]", ids)] if isinstance(ids, str) else ids
     )
     
     pin_df["is_entrapment"] = pin_df["proteinIds"].apply(
